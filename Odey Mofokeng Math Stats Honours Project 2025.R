@@ -182,6 +182,16 @@ fit_rk_model <- function(data_sp, data_cases, data_wwtp, data_access,
   model_sf <- st_as_sf(data_sp, crs = 4326)
   
   # 7) Join all data sources
+  lag_data <- data_cases %>%
+  filter(date <= as.Date(target_date)) %>%
+  arrange(SP_CODE, date) %>%
+  group_by(SP_CODE) %>%
+  mutate(lag1_cases = coalesce(lag(Cases, 1) / 1000, 0)) %>%
+  filter(date == as.Date(target_date)) %>%
+  select(SP_CODE, lag1_cases)
+  model_sf <- model_sf %>%
+  left_join(lag_data, by = "SP_CODE") %>%
+  mutate(lag1_cases = replace_na(lag1_cases, 0))
   model_sf <- model_sf %>%
     left_join(target_cases %>% select(SP_CODE, Cases, case_accel, case_trend,
                                       day_of_year, pop_density, S_COVIDI), 
@@ -243,6 +253,7 @@ fit_rk_model <- function(data_sp, data_cases, data_wwtp, data_access,
   model_sf$hospital_dist <- apply(dmat_hosp, 1, min) / 1000
   
   # 9) Variable preparation
+  
   if (!"Population" %in% names(model_sf)) stop("Population column is required")
   model_sf <- model_sf %>%
     mutate(
@@ -253,7 +264,7 @@ fit_rk_model <- function(data_sp, data_cases, data_wwtp, data_access,
         warning("S_COVIDI not found. Using default mortality rate of 0.0002.")
         0.0002
       },
-      mortality_factor = pmin(0.005, mortality_rate * replace_na(Cases, 0)),
+      mortality_factor = pmin(0.005, mortality_rate * replace_na(lag1_cases, 0)),
       active_pop = pmax(0, Population * (1 - mortality_factor)),
       active_pop = replace_na(active_pop, median(Population, na.rm = TRUE)),
       log_pop = log1p(replace_na(active_pop, 0)),
@@ -1369,6 +1380,17 @@ fit_slmm_model <- function(data_sp, data_cases, data_wwtp, data_access,
       accessibility_mean = replace_na(accessibility_mean, 0),
       inaccessible_flag_prop = replace_na(inaccessible_flag_prop, 0)
     )
+lag_data <- data_cases %>%
+  filter(date <= as.Date(target_date)) %>%
+  arrange(SP_CODE, date) %>%
+  group_by(SP_CODE) %>%
+  mutate(lag1_cases = coalesce(lag(Cases, 1) / 1000, 0)) %>%
+  filter(date == as.Date(target_date)) %>%
+  select(SP_CODE, lag1_cases)
+
+model_sf <- model_sf %>%
+  left_join(lag_data, by = "SP_CODE") %>%
+  mutate(lag1_cases = replace_na(lag1_cases, 0))
   
   # 8) Calculate spatial distances (same as RK)
   model_sf <- st_transform(model_sf, crs = 32736)
@@ -1390,7 +1412,7 @@ fit_slmm_model <- function(data_sp, data_cases, data_wwtp, data_access,
       } else {
         0.0002
       },
-      mortality_factor = pmin(0.005, mortality_rate * replace_na(Cases, 0)),
+      mortality_factor = pmin(0.005, mortality_rate * replace_na(lag1_cases, 0)),
       active_pop = pmax(0, Population * (1 - mortality_factor)),
       active_pop = replace_na(active_pop, median(Population, na.rm = TRUE)),
       log_pop = log1p(replace_na(active_pop, 0)),
